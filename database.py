@@ -1,16 +1,15 @@
 import sqlite3
 import os
+from werkzeug.security import generate_password_hash
 
-# Absolute pathing for Vercel
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = os.path.join(BASE_DIR, "ids_database.db")
 
 def init_db():
-    """Initializes the SQLite database and creates Chapter 4 tables."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # Alerts Table (Section 4.3.2)
+    # 1. Alerts Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,17 +25,29 @@ def init_db():
         )
     ''')
 
-    # System Log Table
+    # 2. Users Table (NEW)
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS system_log (
+        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            level TEXT,
-            message TEXT
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL
         )
     ''')
 
-    # Inject one fake attack so the dashboard isn't empty on preview
+    # 3. Inject Default Users (if they don't exist)
+    cursor.execute("SELECT COUNT(*) FROM users")
+    if cursor.fetchone()[0] == 0:
+        print("[*] Creating default Admin and Analyst accounts...")
+        # Password for both is: password123
+        hashed_pw = generate_password_hash('password123')
+        
+        cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", 
+                       ('admin', hashed_pw, 'Admin'))
+        cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", 
+                       ('analyst', hashed_pw, 'Analyst'))
+
+    # 4. Inject one fake attack for the dashboard
     cursor.execute('''
         INSERT INTO alerts (timestamp, src_ip, dst_ip, protocol, attack_type, confidence_score)
         SELECT '2026-03-24 14:05:00', '192.168.1.50', '10.0.0.5', 'TCP', 'DDoS', 0.98
@@ -45,7 +56,7 @@ def init_db():
 
     conn.commit()
     conn.close()
-    print(f"[+] Database built successfully at: {DB_NAME}")
+    print(f"[+] Database built successfully with Users table at: {DB_NAME}")
 
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
