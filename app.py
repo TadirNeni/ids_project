@@ -5,13 +5,14 @@ from database import get_db_connection
 
 app = Flask(__name__)
 
-# --- EMBEDDED DARK THEME DASHBOARD ---
+# --- EMBEDDED DARK THEME DASHBOARD (NOW LIVE) ---
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="5">
     <title>IDS Control Centre</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -35,15 +36,18 @@ DASHBOARD_HTML = """
             <a href="/" class="block px-4 py-2 rounded bg-primary/10 text-primary font-medium">Dashboard Overview</a>
             <a href="/dataset" class="block px-4 py-2 rounded hover:bg-gray-700 transition">Dataset Management</a>
             <a href="#" class="block px-4 py-2 rounded hover:bg-gray-700 transition">Model Training</a>
-            <a href="#" class="block px-4 py-2 rounded hover:bg-gray-700 transition">Real-Time Detection</a>
+            <a href="#" class="block px-4 py-2 rounded hover:bg-gray-700 transition text-alert">Real-Time Detection</a>
         </nav>
+        <div class="p-4 border-t border-gray-700 text-xs text-gray-400">
+            Live Sniffer: <span class="text-safe font-bold">ACTIVE</span>
+        </div>
     </aside>
 
     <main class="flex-1 p-8 overflow-y-auto">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-cardbg p-6 rounded-lg border border-gray-700 shadow-lg">
                 <h3 class="text-sm text-gray-400">Total Flows Processed</h3>
-                <p class="text-3xl font-bold mt-2 text-white">124,592</p>
+                <p class="text-3xl font-bold mt-2 text-white">Live Monitoring</p>
             </div>
             <div class="bg-cardbg p-6 rounded-lg border border-gray-700 shadow-lg">
                 <h3 class="text-sm text-gray-400">Attacks Detected</h3>
@@ -55,33 +59,43 @@ DASHBOARD_HTML = """
             </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div class="bg-cardbg p-6 rounded-lg border border-gray-700 shadow-lg">
-                <h2 class="text-lg font-semibold mb-4 border-b border-gray-700 pb-2">Live Network Traffic</h2>
-                <canvas id="trafficChart" height="200"></canvas>
+        <div class="bg-cardbg p-6 rounded-lg border border-gray-700 shadow-lg mb-8">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                <h2 class="text-lg font-semibold">Live Packet Classification</h2>
+                <span class="px-3 py-1 bg-alert/20 text-alert rounded-full text-xs font-bold animate-pulse">Live DB Sync Active</span>
             </div>
-            <div class="bg-cardbg p-6 rounded-lg border border-gray-700 shadow-lg">
-                <h2 class="text-lg font-semibold mb-4 border-b border-gray-700 pb-2">Attack Distribution</h2>
-                <canvas id="attackChart" height="200"></canvas>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <thead class="text-gray-400 bg-gray-800/50">
+                        <tr>
+                            <th class="px-4 py-3">Timestamp</th>
+                            <th class="px-4 py-3">Src IP:Port</th>
+                            <th class="px-4 py-3">Dst IP:Port</th>
+                            <th class="px-4 py-3">Protocol</th>
+                            <th class="px-4 py-3">Prediction</th>
+                            <th class="px-4 py-3">Confidence</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        {% for event in events %}
+                        <tr class="hover:bg-gray-800 transition {% if event['attack_type'] != 'Benign' %}bg-alert/5 text-alert{% else %}text-safe{% endif %}">
+                            <td class="px-4 py-3 text-gray-400">{{ event['timestamp'] }}</td>
+                            <td class="px-4 py-3">{{ event['src_ip'] }}:{{ event['src_port'] }}</td>
+                            <td class="px-4 py-3">{{ event['dst_ip'] }}:{{ event['dst_port'] }}</td>
+                            <td class="px-4 py-3">{{ event['protocol'] }}</td>
+                            <td class="px-4 py-3 font-semibold">{{ event['attack_type'] }}</td>
+                            <td class="px-4 py-3 text-xs">{{ event['confidence_score'] }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="px-4 py-3 text-center text-gray-500">Listening for network traffic... No alerts generated yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </main>
-
-    <script>
-        const trafficCtx = document.getElementById('trafficChart').getContext('2d');
-        new Chart(trafficCtx, {
-            type: 'line',
-            data: { labels: ['10m', '8m', '6m', '4m', '2m', 'Now'], datasets: [{ label: 'Normal Traffic', data: [12, 19, 15, 25, 22, 30], borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', fill: true, tension: 0.4 }] },
-            options: { responsive: true, maintainAspectRatio: false, color: '#9ca3af' }
-        });
-
-        const attackCtx = document.getElementById('attackChart').getContext('2d');
-        new Chart(attackCtx, {
-            type: 'bar',
-            data: { labels: ['DDoS', 'PortScan', 'Botnet'], datasets: [{ label: 'Detected', data: [2541, 1205, 145], backgroundColor: ['#ef4444', '#f59e0b', '#8b5cf6'] }] },
-            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, color: '#9ca3af' }
-        });
-    </script>
 </body>
 </html>
 """
@@ -90,13 +104,18 @@ DASHBOARD_HTML = """
 def dashboard():
     try:
         conn = get_db_connection()
+        # 1. Get total attack count dynamically
         attack_count_query = conn.execute("SELECT COUNT(*) FROM alerts WHERE attack_type != 'Benign'").fetchone()
         total_attacks = attack_count_query[0] if attack_count_query else 0
+        
+        # 2. Fetch the 10 most recent alerts to display in the table
+        recent_events = conn.execute('SELECT * FROM alerts ORDER BY timestamp DESC LIMIT 10').fetchall()
         conn.close()
     except Exception as e:
         total_attacks = 0
+        recent_events = []
 
-    return render_template_string(DASHBOARD_HTML, total_attacks=total_attacks)
+    return render_template_string(DASHBOARD_HTML, total_attacks=total_attacks, events=recent_events)
 
 @app.route('/dataset', methods=['GET'])
 def dataset_management():
