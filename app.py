@@ -1,4 +1,6 @@
-from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
+from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for, make_response
+import csv
+import io
 import sqlite3
 import os
 from functools import wraps
@@ -469,7 +471,20 @@ REALTIME_HTML = """
         <div class="bg-cardbg rounded-lg border border-gray-700 shadow-lg">
             <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800/50">
                 <h3 class="text-lg font-semibold text-white">Comprehensive Threat Log</h3>
-                <button class="text-xs bg-gray-700 hover:bg-gray-600 text-white py-1 px-3 rounded transition">Export CSV</button>
+                <div class="flex gap-2">
+                    {% if role == 'Admin' %}
+                    <form method="POST" action="/clear_logs" onsubmit="return confirm('CRITICAL WARNING: Are you sure you want to permanently purge all threat logs? This action cannot be undone and will wipe the database.');">
+                        <button type="submit" class="text-xs bg-alert/20 hover:bg-alert/40 text-alert border border-alert/50 py-1 px-3 rounded transition flex items-center">
+                            <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            Purge Database
+                        </button>
+                    </form>
+                    <a href="/export_logs" class="text-xs bg-gray-700 hover:bg-gray-600 text-white py-1 px-3 rounded transition flex items-center">
+                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Export Forensics (CSV)
+                    </a>
+                    {% endif %}
+                </div>
             </div>
             <div class="overflow-x-auto max-h-[500px]">
                 <table class="w-full text-left text-sm">
@@ -635,6 +650,50 @@ def realtime_detection():
         username=session.get('username'),
         role=session.get('role')
     )
+    
+@app.route('/export_logs')
+@login_required
+def export_logs():
+    # Only allow Administrators to download forensics
+    if session.get('role') != 'Admin':
+        return "403 Forbidden: Administrator clearance required.", 403
+        
+    conn = get_db_connection()
+    alerts = conn.execute("SELECT * FROM alerts ORDER BY timestamp DESC").fetchall()
+    conn.close()
+
+    # Create an in-memory string buffer for the CSV
+    si = io.StringIO()
+    cw = csv.writer(si)
+    
+    # Write the CSV Headers
+    cw.writerow(['Alert ID', 'Timestamp', 'Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol', 'Attack Classification', 'Model Confidence'])
+    
+    # Write the Database Rows
+    for row in alerts:
+        cw.writerow([row['id'], row['timestamp'], row['src_ip'], row['dst_ip'], row['src_port'], row['dst_port'], row['protocol'], row['attack_type'], row['confidence_score']])
+
+    # Package the buffer into a downloadable file response
+    output = make_response(si.getvalue())
+    output.headers["Content-Disposition"] = "attachment; filename=ids_threat_forensics.csv"
+    output.headers["Content-type"] = "text/csv"
+    return output
+
+
+@app.route('/clear_logs', methods=['POST'])
+@login_required
+def clear_logs():
+    # Only allow Administrators to purge the database
+    if session.get('role') != 'Admin':
+        return "403 Forbidden: Administrator clearance required.", 403
+        
+    conn = get_db_connection()
+    conn.execute("DELETE FROM alerts")
+    conn.commit()
+    conn.close()
+    
+    # Intelligently redirect the user back to the page they clicked the button from
+    return redirect(request.referrer or url_for('dashboard'))
 
 # ==========================================
 # 3. SERVER EXECUTION
