@@ -687,14 +687,23 @@ def clear_logs():
     if session.get('role') != 'Admin':
         return "403 Forbidden: Administrator clearance required.", 403
         
-    conn = get_db_connection()
-    conn.execute("DELETE FROM alerts")
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        conn.execute("DELETE FROM alerts")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        # If the database is locked, print the error to the terminal instead of crashing
+        print(f"Failed to clear database: {e}")
+        return "Error clearing database. Please try again in a few seconds.", 500
     
-    # Intelligently redirect the user back to the page they clicked the button from
-    return redirect(request.referrer or url_for('dashboard'))
-
+    # Bulletproof redirect: send them back where they came from, or safely to the home page '/'
+    referrer = request.referrer
+    if referrer:
+        return redirect(referrer)
+    else:
+        return redirect('/')
+    
 # ==========================================
 # 3. SERVER EXECUTION
 # ==========================================
